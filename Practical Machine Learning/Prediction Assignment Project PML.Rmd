@@ -1,0 +1,130 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Daniel Robinett"
+date: "February 23, 2019"
+output: html_document
+---
+
+## Introduction  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal was  to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.
+
+
+### Load R Libraries 
+```{r message=FALSE} 
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(tibble)
+library(Rmisc)
+library(ggplot2)
+```
+### Download and Read the Data from url
+Direct download and read csv from url link into two data frames.
+```{r}
+trainRaw<- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",header=TRUE)
+testRaw <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",header=TRUE)
+dim(trainRaw)
+dim(testRaw)
+```
+The training data set contains 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables. The classe variable in the training set is the outcome to predict.
+
+### Clean the data
+In this step, we will clean the data and get rid of observations with missing values as well as some meaningless variables.(See appendix for summary prior to cleaning)
+
+First, columns with NA missing values were removed.
+
+```{r}
+trainRaw <- trainRaw[, colSums(is.na(trainRaw)) == 0]
+testRaw <- testRaw[, colSums(is.na(testRaw)) == 0]
+```
+Next, we get rid of some columns that do not contribute much to the accelerometer measurements.
+
+```{r}
+classe <- trainRaw$classe
+trainRemove <- grepl("^X|timestamp|window", names(trainRaw))
+trainRaw <- trainRaw[, !trainRemove]
+trainCleaned <- trainRaw[, sapply(trainRaw, is.numeric)]
+trainCleaned$classe <- classe
+testRemove <- grepl("^X|timestamp|window", names(testRaw))
+testRaw <- testRaw[, !testRemove]
+testCleaned <- testRaw[, sapply(testRaw, is.numeric)]
+```
+Now, the cleaned training data set contains 19622 observations and 53 variables, while the testing data set contains 20 observations and 53 variables. The "classe" variable is still in the cleaned training set.
+
+### Slice the data into training and test sets
+Then, we can split the cleaned training set into a pure training data set (60%) and a validation data set (40%). The validation data set will be used to conduct cross validation in future steps.  
+
+```{r}
+set.seed(20000) # For reproducibile purpose
+inTrain <- createDataPartition(trainCleaned$classe, p=0.60, list=F)
+trainData <- trainCleaned[inTrain, ]
+testData <- trainCleaned[-inTrain, ]
+```
+
+Perform exploratory analysis review of trainData
+```{r}
+p1 <- ggplot(trainData, aes(classe,pitch_forearm)) + 
+  geom_boxplot(aes(fill=classe))
+p2 <- ggplot(trainData, aes(classe, magnet_arm_x)) + 
+  geom_boxplot(aes(fill=classe))
+multiplot(p1,p2,cols=2)
+```
+## Model Selection 
+After reviewing the box plots in the previous step, it does not appear a linear regression model will be a good fit for this data. Instead, we will utilize the method known as "Random Forest" which will automatically select important variables and utilize the 5-Fold cross validation when applying the algorithm.
+
+```{r}
+controlRf <- trainControl(method="cv", 5)
+modelRf <- train(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=150)
+modelRf
+```
+
+Now it's time to test our training model against our test data and estimate the performance of the model.  
+
+```{r}
+predictRf <- predict(modelRf, testData)
+confusionMatrix(testData$classe, predictRf)
+```
+
+```{r}
+accuracy <- postResample(predictRf, testData$classe)
+accuracy
+```
+
+
+```{r}
+ooser <- 1 - as.numeric(confusionMatrix(testData$classe, predictRf)$overall[1])
+ooser
+```
+
+So, the estimated accuracy of the model is 99.30% and the estimated out-of-sample error is 0.85%.
+
+## Predicting for Test Data Set
+Now, we apply the model to the original testing data set downloaded from the data source. We remove the `problem_id` column first.  
+
+```{r}
+result <- predict(modelRf, testCleaned[, -length(names(testCleaned))])
+result
+```
+
+## Appendix: Figures
+1. Look at data
+```{r echo=FALSE}
+glimpse(trainRaw)
+```
+
+2. Correlation Matrix Visualization  
+
+```{r}
+corrPlot <- cor(trainData[, -length(names(trainData))])
+corrplot(corrPlot, method="color", type="lower", order="hclust", tl.cex=0.70, tl.col="black", tl.srt = 45, diag = FALSE)
+
+```
+
+3. Decision Tree Visualization
+
+```{r}
+treeModel <- rpart(classe ~ ., data=trainData, method="class")
+prp(treeModel) # fast plot
+```
